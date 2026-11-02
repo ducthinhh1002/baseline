@@ -30,7 +30,9 @@ Use method-specific environments: preserve author dependency versions for GaussM
 
 Prepare local artifacts manually. `--artifacts` uses `teachers/stable_signature/{sd2_decoder.pth,extractor.pt}`, `teachers/serum/{checkpoint.pth,backbone.json}` (backbone JSON has local `path`), and operator-provided GaussMarker key/GNR/fuser paths in assets JSON. TrustMark official Q YAML/encoder/decoder must be supplied in its native `official/python/trustmark/models/` directory. Author checkpoints/licenses remain the operator's responsibility. Do not use arbitrary replacement backbone with SERUM.
 
-Example Stable Signature (run only by operator on GPU):
+Strict generation requires `--teacher-training author_training_manifest.json` (rows with image_id/text). If public checkpoint membership is unavailable, `--allow-unverified-pretrained` is an explicit exploratory override; those runs must not claim verified disjointness. GROW is training-free.
+
+Example Stable Signature (run only by operator on GPU; add the provenance flag above):
 
 ```bash
 python -m benchmark.cli generate --execute --method stable_signature --assets assets.json --artifacts /local/artifacts --work work/ss --split train --output data/ss/images/teacher_wm_train

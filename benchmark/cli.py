@@ -15,7 +15,9 @@ def main():
     p.add_argument('--threshold',type=Path);p.add_argument('--output',type=Path);p.add_argument('--model',type=Path)
     p.add_argument('--arch',choices=['sd14','sana600m','pixart512']);p.add_argument('--mode',choices=['full','r4','r16','r32'])
     p.add_argument('--split',choices=['train','validation','test','calibration'],default='test')
-    p.add_argument('--attack',default='clean');p.add_argument('--execute',action='store_true');a=p.parse_args()
+    p.add_argument('--attack',default='clean');p.add_argument('--execute',action='store_true')
+    p.add_argument('--allow-unverified-pretrained',action='store_true',help='Exploratory only: author training membership is unavailable; not strict disjoint reproduction')
+    a=p.parse_args()
     if a.stage=='verify-sources':
         manifest=read(BASE/'configs/official_sources.json')
         for name,m in manifest.items():
@@ -66,6 +68,10 @@ def main():
     from benchmark.methods.native import create
     from common import pixels,save_images,manifest
     if a.stage=='generate':
+        audit=validate(read(a.prompts),teacher_training=read(a.teacher_training) if a.teacher_training else None,training_free=a.method=='grow')
+        if a.split!='calibration' and not audit['teacher_training_disjoint_verified'] and not a.allow_unverified_pretrained:
+            raise ValueError('Author training-data membership unknown: supply --teacher-training, or explicitly opt into exploratory --allow-unverified-pretrained')
+        dump(a.work/'data_provenance.json',audit)
         if a.split=='calibration':
             if not a.calibration:raise ValueError('Independent calibration prompts required')
             rows=read(a.calibration);validate(read(a.prompts),rows)
