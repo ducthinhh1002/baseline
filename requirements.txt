@@ -5,6 +5,7 @@ accelerate==1.10.1
 safetensors==0.6.2
 numpy==1.26.4
 scipy
+matplotlib
 Pillow
 omegaconf
 einops

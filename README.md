@@ -45,6 +45,8 @@ SD1.4/PixArt and native flow-matching MSE for Sana. No quality loss, watermark
 loss, best-checkpoint search, or teacher re-training. Final checkpoint fixed.
 Full adapter/optimizer/scaler/order/Python/NumPy/CPU/CUDA RNG state every1250.
 Save all losses to JSONL. Log actual applied/skipped AMP update counts.
+Restoring those states continues training; FP16 execution across different
+GPUs is not guaranteed to reproduce every floating-point bit.
 LoRA targets follow the Saturday trainers: SD1.4 attention projections plus
 ungrouped Conv2d modules; Sana/PixArt all Linear and ungrouped Conv2d modules.
 The actual expanded module names and trainable parameter counts are saved.
