@@ -1,0 +1,10 @@
+{
+  "teacher_path": "/absolute/path/clean_sd21",
+  "serum_alpha": 0.5,
+  "gaussmarker": {
+    "w1": "/absolute/path/w1_256.pth",
+    "w2": "/absolute/path/w2.pth",
+    "gnr": "/absolute/path/model_final.pth",
+    "classifier": "/absolute/path/sd21_cls2.pkl"
+  }
+}

@@ -1,0 +1,10 @@
+#!/bin/bash
+#PBS -N baseline_students
+#PBS -J 0-59
+#PBS -l select=1:ncpus=8:ngpus=1:mem=64gb
+#PBS -l walltime=48:00:00
+set -euo pipefail
+cd "${BENCHMARK_ROOT:?Set BENCHMARK_ROOT to baseline checkout}"
+python -m benchmark.scripts.array_task --index "${PBS_ARRAY_INDEX}" \
+  --plan "${PLAN_JSON:?}" --models "${MODELS_JSON:?}" \
+  --data "${DATA_ROOT:?}" --output "${RESULT_ROOT:?}" --execute

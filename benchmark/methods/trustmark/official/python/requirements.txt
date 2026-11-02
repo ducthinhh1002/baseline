@@ -1,0 +1,7 @@
+numpy>=1.20.0
+torch>=2.3.1
+torchvision>=0.18.1
+lightning>=2.0
+omegaconf>=2.1
+six>=1.9
+einops>=0.4.0

@@ -1,0 +1,140 @@
+{
+  "prompt_file": "benchmark/shared/data/prompts.json",
+  "train": 5000,
+  "validation": 1000,
+  "test": 1000,
+  "teacher_backbone": "SD2.1",
+  "students": {
+    "sd14": {
+      "full": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": null
+      },
+      "r32": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 32
+      },
+      "r16": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 16
+      },
+      "r4": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 4
+      }
+    },
+    "sana600m": {
+      "full": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": null
+      },
+      "r32": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 32
+      },
+      "r16": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 16
+      },
+      "r4": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 4
+      }
+    },
+    "pixart512": {
+      "full": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": null
+      },
+      "r32": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 32
+      },
+      "r16": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 16
+      },
+      "r4": {
+        "steps": 20000,
+        "batch": 4,
+        "seed": 0,
+        "checkpoint_every": 1250,
+        "rank": 4
+      }
+    }
+  },
+  "methods": {
+    "stable_signature": {
+      "bits": 48,
+      "metric": "analytical_detection",
+      "alpha": 1e-06
+    },
+    "gaussmarker": {
+      "bits": 256,
+      "metric": "TPR@1%FPR_and_BA",
+      "fpr": 0.01
+    },
+    "trustmark": {
+      "bits": 100,
+      "ecc": false,
+      "metric": "raw_BA",
+      "model": "Q"
+    },
+    "grow": {
+      "bits": 16,
+      "message": "OK",
+      "metric": "M-ACC",
+      "watermark_strength": 0.5,
+      "guidance_scale": 200.0,
+      "watermark_start_ratio": 0.5
+    },
+    "serum": {
+      "metric": "TPR@1%FPR",
+      "fpr": 0.01
+    }
+  },
+  "manipulations": [
+    "clean",
+    "flip",
+    "rotation15",
+    "crop75",
+    "drop96",
+    "gaussian005",
+    "brightness07",
+    "blur15"
+  ],
+  "note": "Study-shared manipulation settings are not claimed to be each paper native attack grid."
+}

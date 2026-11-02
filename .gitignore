@@ -17,3 +17,7 @@ __pycache__/
 *.zip
 *.tar
 *.log
+
+guide_work/
+guide_work*/
+benchmark/methods/**/models/*.ckpt
