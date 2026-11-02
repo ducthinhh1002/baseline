@@ -89,7 +89,8 @@ def teacher_assets(method):
     freeze(dest/'download_complete.json',{'method':method,'upstream_revision':read(REPO/'config/upstream.json')[{'gaussmarker':'GaussMarker','grow':'GROW','serum':'SERUM','trustmark':'trustmark','stable_signature':'stable_signature'}[method]]['revision']})
 def main(bases_only=False):
     sources()
-    for name,(repo,revision) in MODELS.items():hub(repo,revision,name)
+    for name in ['teacher',*config()['students']]:
+        repo,revision=MODELS[name];hub(repo,revision,name)
     if bases_only:return
     failures={}
     for method in config()['methods']:

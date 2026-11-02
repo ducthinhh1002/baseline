@@ -4,7 +4,7 @@ from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('kind',choices=['native','student']);p.add_argument('name');args=p.parse_args()
 project=Path(__file__).resolve().parent
 campaign_root=Path(os.environ.get('BASELINE_WORK',project/'work'))
-os.environ['BASELINE_WORK']=str(campaign_root.parent/'smoke'/args.kind/args.name)
+os.environ['BASELINE_WORK']=str(campaign_root.parent/'smoke'/os.environ.get('BASELINE_PREFLIGHT_ID','manual')/args.kind/args.name)
 from common import ROOT,CACHE,read,write,config,pixels,image_name,save_images,manifest
 import numpy as np
 import torch
@@ -24,7 +24,7 @@ if args.kind=='native':
 else:
     from common import REPO
     c=read(campaign_root/'config.json') if (campaign_root/'config.json').exists() else config()
-    c.update(train_images=4,test_images=2,calibration_images=4,steps=2,checkpoint_every=1)
+    c.update(train_images=4,test_images=2,calibration_images=4,steps=8,checkpoint_every=4)
     write(ROOT/'config.json',c)
     source=read(Path(os.environ.get('BASELINE_PROMPTS',c['prompt_source'])))
     rows={'train':source['train'][:4],'test':source['test'][:2],'calibration':source['calibration'][:4]};write(ROOT/'prompts.json',rows)
