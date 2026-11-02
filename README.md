@@ -113,6 +113,31 @@ Teacher completion prints once after its manipulation panel. Per-step losses,
 download progress and upstream diagnostics stay in task logs. The foreground
 monitor forwards completion/failure lines only, without replaying old messages.
 
+Before the long queue starts, `run.sh` also runs a bounded GPU preflight for
+each selected student architecture using the actual downloaded clean model:
+8 training attempts, save/reload of its PEFT adapter and generation of2 images.
+These synthetic-fixture checks do not measure watermark transfer. Their logs
+are in `work/preflight/`; a failure prevents the long queue from starting.
+Successful checks are reused only for the same training code, model manifests,
+prompt set, library versions and GPU type. `--prepare-only` stops before these
+GPU checks as well as before training. Tiny real Diffusers architecture tests
+also check forward/backward and exact adapter-output roundtrips without any
+downloads in `test_training.py`.
+
+Trainable LoRA tensors stay FP32. Adapter loading explicitly attaches the PEFT
+configuration and sets its state dictionary, then checks all names and tensor
+values exactly; it does not guess between similarly named pipeline/model
+adapter loaders. Loss, cached latents/embeddings, predictions, gradients and
+updated adapter parameters are checked for NaN/Inf. SD1.4 FP16 uses dynamic AMP
+scaling starting at1024: an overflow skips the optimizer update and lowers the
+scale, without clipping an infinite gradient into NaN.16 consecutive overflows
+stop with `failure.json`. BF16/non-AMP nonfinite gradients stop before optimizer
+mutation. Gradient clipping accumulates its norm in FP64. Logs distinguish
+attempted, applied and skipped updates. These checks limit corruption and catch
+API mistakes early; they do not guarantee every hardware/data combination can
+finish20000 updates. Use a fresh work directory after changing training code;
+existing frozen training identities are deliberately not silently migrated.
+
 ```bash
 # Put large models/data on the data volume and use GPU1.
 BASELINE_WORK=/data/baseline/work BASELINE_CACHE=/data/baseline/cache ./run.sh --gpus 1

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from common import ROOT,CACHE,read,write,freeze,sha,config,policy,pixels,image_name,status,manifest
 from saturday_channels import transform,SETTINGS
+from training_checks import finite,checked_update
 
 def model_path(arch):return read(CACHE/'models'/f'{arch}.json')['path']
 def pipe_for(arch):
@@ -41,6 +42,7 @@ def cache(method,arch,attack):
                     batch=rows[offset:min(offset+4,start+32,len(rows))]
                     with torch.inference_mode():
                         v=pipe.encode_prompt([r['text'] for r in batch],device='cuda',num_images_per_prompt=1,do_classifier_free_guidance=False,**prompt_kwargs(arch))
+                    finite('cached text embedding',v[0])
                     for j in range(len(batch)):items.append({'embedding':v[0][j].cpu(),'mask':None if arch=='sd14' else v[1][j].cpu()})
                 tmp=f.with_suffix('.tmp');torch.save(items,tmp);tmp.replace(f)
             freeze(text/'complete.json',{'n':len(rows),'files':{f.name:sha(f) for f in text.glob('*.pt')}})
@@ -58,6 +60,8 @@ def cache(method,arch,attack):
                     posterior=pipe.vae.encode(x)
                     if arch=='sana600m':mean=posterior.latent*pipe.vae.config.scaling_factor;std=None
                     else:mean=posterior.latent_dist.mean*pipe.vae.config.scaling_factor;std=posterior.latent_dist.std*pipe.vae.config.scaling_factor
+                finite('cached VAE latent mean',mean)
+                if std is not None:finite('cached VAE latent std',std)
                 for j,i in enumerate(ids):items.append({'index':i,'mean':mean[j].float().cpu(),'std':std[j].float().cpu() if std is not None else None})
             tmp=f.with_suffix('.tmp');torch.save(items,tmp);tmp.replace(f)
         freeze(folder/'complete.json',{'n':len(rows),'identity_sha256':sha(folder/'identity.json'),'files':{f.name:sha(f) for f in folder.glob('*.pt')}})
@@ -68,26 +72,37 @@ def training_model(arch):
     from diffusers import UNet2DConditionModel,SanaTransformer2DModel,PixArtTransformer2DModel
     cls={'sd14':UNet2DConditionModel,'sana600m':SanaTransformer2DModel,'pixart512':PixArtTransformer2DModel}[arch]
     return cls.from_pretrained(model_path(arch),subfolder='unet' if arch=='sd14' else 'transformer',torch_dtype=torch.float16 if arch=='sd14' else torch.bfloat16,local_files_only=True).cuda()
+def attach_adapter(model,cfg):
+    from peft import inject_adapter_in_model
+    if getattr(model,'peft_config',None):raise RuntimeError('Model already has an adapter')
+    # Diffusers UNet/Sana provide add_adapter; pinned PixArt does not.
+    if callable(getattr(model,'add_adapter',None)):model.add_adapter(cfg)
+    else:inject_adapter_in_model(cfg,model)
+    for n,p in model.named_parameters():
+        if 'lora_' in n:p.data=p.data.float()
+
 def add_lora(model,arch):
-    from peft import LoraConfig,inject_adapter_in_model
+    from peft import LoraConfig
     model.requires_grad_(False)
     targets=[n for n,m in model.named_modules() if (isinstance(m,torch.nn.Linear) and (arch!='sd14' or n.endswith(('to_q','to_k','to_v','to_out.0')))) or (isinstance(m,torch.nn.Conv2d) and m.groups==1)]
     cfg=LoraConfig(r=4,lora_alpha=4,init_lora_weights='gaussian',target_modules=targets)
-    if hasattr(model,'add_adapter'):model.add_adapter(cfg)
-    else:inject_adapter_in_model(cfg,model)
-    for n,p in model.named_parameters():
-        if p.requires_grad:p.data=p.data.float()
+    if not targets:raise RuntimeError('No LoRA target modules found')
+    attach_adapter(model,cfg)
+    if any(p.requires_grad and 'lora_' not in n for n,p in model.named_parameters()):
+        raise RuntimeError('A base-model parameter was accidentally unfrozen')
     return cfg,targets
 def load_adapter(model,folder):
-    from peft import LoraConfig,inject_adapter_in_model,set_peft_model_state_dict,get_peft_model_state_dict
+    from peft import LoraConfig,set_peft_model_state_dict,get_peft_model_state_dict
     from safetensors.torch import load_file
-    if hasattr(model,'load_adapter'):model.load_adapter(str(folder))
-    else:
-        inject_adapter_in_model(LoraConfig.from_pretrained(str(folder)),model)
-        x=set_peft_model_state_dict(model,load_file(str(Path(folder)/'adapter_model.safetensors')));assert not x.unexpected_keys
-    actual=get_peft_model_state_dict(model);expected=load_file(str(Path(folder)/'adapter_model.safetensors'))
-    assert actual.keys()==expected.keys()
-    for n,t in actual.items():torch.testing.assert_close(t.cpu(),expected[n].to(t.dtype),rtol=0,atol=0)
+    expected=load_file(str(Path(folder)/'adapter_model.safetensors'))
+    for n,t in expected.items():finite('saved adapter '+n,t)
+    attach_adapter(model,LoraConfig.from_pretrained(str(folder)))
+    x=set_peft_model_state_dict(model,expected)
+    if x.unexpected_keys or any('lora_' in n for n in x.missing_keys):
+        raise RuntimeError('Adapter key mismatch: '+str(x))
+    actual=get_peft_model_state_dict(model)
+    if actual.keys()!=expected.keys():raise RuntimeError('Adapter tensor names differ after reload')
+    for n,t in actual.items():torch.testing.assert_close(t.float().cpu(),expected[n].float(),rtol=0,atol=0)
     model.eval().requires_grad_(False)
 def train(method,arch,attack):
     from diffusers import DDPMScheduler,FlowMatchEulerDiscreteScheduler
@@ -96,7 +111,7 @@ def train(method,arch,attack):
     c=config();p=ROOT/'students'/method/arch/attack;p.mkdir(parents=True,exist_ok=True)
     status(p,'cache');folder,text=cache(method,arch,attack)
     identity={'feature_identity':sha(folder/'identity.json'),'text_identity':sha(text/'identity.json'),
-        'code':sha(__file__),'rank':4,'steps':c['steps'],'seed':c['seed'],'batch':c['batch_size'],'schedule':'constant1e-4 to7500; cosine2e-5 at12500; constant afterwards',
+        'code':sha(__file__),'numerical_checks':sha(Path(__file__).parent/'training_checks.py'),'rank':4,'steps':c['steps'],'seed':c['seed'],'batch':c['batch_size'],'schedule':'constant1e-4 to7500; cosine2e-5 at12500; constant afterwards',
         'objective':'ordinary image-only denoising/flow MSE; no detector, owner key, quality loss, or model optimization','selection':'fixed last step'}
     freeze(p/'identity.json',identity)
     if (p/'trained.json').exists():return
@@ -111,7 +126,7 @@ def train(method,arch,attack):
     freeze(p/'targets.json',{'modules':targets,'parameters':sum(v.numel() for v in params),'rank':4,'clean_model_sha256':sha(CACHE/'models'/f'{arch}.json')})
     scheduler=(FlowMatchEulerDiscreteScheduler if arch=='sana600m' else DDPMScheduler).from_pretrained(model_path(arch),subfolder='scheduler',local_files_only=True)
     opt=torch.optim.AdamW(params,lr=1e-4,betas=(.9,.999),eps=1e-8,weight_decay=.01)
-    scaler=torch.amp.GradScaler('cuda',enabled=arch=='sd14');dtype=torch.float16 if arch=='sd14' else torch.bfloat16
+    scaler=torch.amp.GradScaler('cuda',enabled=arch=='sd14',init_scale=1024.);dtype=torch.float16 if arch=='sd14' else torch.bfloat16
     rng=torch.Generator('cpu').manual_seed(c['seed']);order=[];offset=0;start=applied=skipped=0
     cpdir=p/'checkpoints';cpdir.mkdir(exist_ok=True);existing=sorted((x for x in cpdir.glob('step*') if (x/'manifest.json').exists()),key=lambda x:int(x.name[4:]))
     if existing:
@@ -126,6 +141,7 @@ def train(method,arch,attack):
         log=p/'losses.jsonl'
         if log.exists():
             a=[json.loads(x) for x in log.read_text().splitlines()];log.write_text(''.join(json.dumps(x)+'\n' for x in a if x['step']<=start))
+    consecutive_skips=0
     status(p,'train',step=start,applied=applied,skipped=skipped)
     with (p/'losses.jsonl').open('a',buffering=1) as log:
         for step in range(start,c['steps']):
@@ -142,6 +158,7 @@ def train(method,arch,attack):
                 t=torch.randint(0,scheduler.config.num_train_timesteps,(batch,),device='cuda');noisy=scheduler.add_noise(z,noise,t)
                 target=noise if scheduler.config.prediction_type=='epsilon' else scheduler.get_velocity(z,noise,t)
             opt.zero_grad(set_to_none=True)
+            finite('training latent',noisy);finite('text embedding',text_emb);finite('training target',target)
             for group in opt.param_groups:group['lr']=1e-4*factor(step)
             with torch.autocast('cuda',dtype=dtype):
                 if arch=='sd14':pred=model(noisy,t,encoder_hidden_states=text_emb).sample
@@ -151,16 +168,23 @@ def train(method,arch,attack):
                     pred=model(**kw)[0]
                     if arch=='pixart512':pred=pred.chunk(2,dim=1)[0]
                 loss=torch.nn.functional.mse_loss(pred.float(),target.float())
-            if not torch.isfinite(loss):raise RuntimeError('Nonfinite native student loss')
-            scaler.scale(loss).backward();scaler.unscale_(opt);torch.nn.utils.clip_grad_norm_(params,1.)
-            previous=scaler.get_scale();scaler.step(opt);scaler.update();skip=int(scaler.get_scale()<previous);skipped+=skip;applied+=1-skip
-            row={'step':step+1,'loss':float(loss.detach()),'applied':applied,'skipped':skipped,'seconds':time.monotonic()-began,'lr':opt.param_groups[0]['lr']};log.write(json.dumps(row)+'\n')
+            try:
+                finite('student prediction',pred)
+                update=checked_update(loss,opt,scaler,params)
+                skip=update['skipped'];skipped+=skip;applied+=1-skip
+                consecutive_skips=consecutive_skips+1 if skip else 0
+                if consecutive_skips>=16:raise RuntimeError('16 consecutive AMP overflows; training stopped')
+            except Exception as e:
+                write(p/'failure.json',{'arch':arch,'step':step+1,'image_indices':ids,'error':str(e),'applied':applied,'skipped':skipped})
+                raise
+            row={**update,'step':step+1,'loss':float(loss.detach()),'applied':applied,'skipped':skipped,'step_skipped':skip,'seconds':time.monotonic()-began,'lr':opt.param_groups[0]['lr']};log.write(json.dumps(row,allow_nan=False)+'\n')
             if (step+1)%100==0:status(p,'train',**row)
             if (step+1)%c['checkpoint_every']==0 or step+1==c['steps']:
                 cp=cpdir/f'step{step+1}';tmp=cpdir/f'.pending{step+1}';tmp.mkdir(exist_ok=False)
                 save_file({n:v.detach().cpu().contiguous() for n,v in named.items()},str(tmp/'trainable.safetensors'))
                 torch.save({'step':step+1,'applied':applied,'skipped':skipped,'order':order,'offset':offset,'optimizer':opt.state_dict(),'scaler':scaler.state_dict(),'data_rng':rng.get_state(),'cpu_rng':torch.get_rng_state(),'cuda_rng':torch.cuda.get_rng_state_all(),'python_rng':random.getstate(),'numpy_rng':np.random.get_state()},tmp/'state.pt')
                 write(tmp/'manifest.json',{'identity':sha(p/'identity.json'),'files':{f.name:sha(f) for f in tmp.iterdir()}});tmp.rename(cp)
+    if not applied:raise RuntimeError('No optimizer update was applied')
     dest=p/'adapter';dest.mkdir(exist_ok=True);lora.save_pretrained(dest)
     save_file({n:v.detach().cpu().contiguous() for n,v in get_peft_model_state_dict(model).items()},str(dest/'adapter_model.safetensors'))
     assert any(v.detach().abs().max()>0 for n,v in named.items() if 'lora_B' in n)

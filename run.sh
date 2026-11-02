@@ -97,6 +97,7 @@ fi
 INIT=(--config "$CONFIG" --prompts "$PROMPTS")
 [[ -z "$OVERRIDES" ]] || INIT+=(--overrides "$OVERRIDES")
 "$PY" tests.py
+"$PY" test_training.py
 "$PY" campaign.py initialize "${INIT[@]}"
 echo "Downloading pinned sources and model artifacts; log: $BASELINE_WORK/logs/download.log"
 if ! "$PY" download.py > "$BASELINE_WORK/logs/download.log" 2>&1; then
@@ -107,6 +108,7 @@ if (( PREPARE_ONLY )); then
   echo 'Environment, prompts and downloads ready. Rerun without --prepare-only to train.'
   exit 0
 fi
+"$PY" preflight.py --gpu "${GPUS%%,*}"
 RUN=(--gpus "$GPUS" --workers-per-gpu "$WORKERS")
 (( ! RETRY_FAILED )) || RUN+=(--retry-failed)
 exec "$PY" pipeline.py "${RUN[@]}"
