@@ -49,7 +49,7 @@ def decode_folder(backend,folder,attack=None,payload_output=None):
     if payload_output and payload:
         from metrics import summarize
         freeze(payload_output,{'coordinates':payload,'metrics':summarize(np.asarray(payload)*2-1,backend.payload_key,c['aggregate_sizes'],c['partitions'],c['nominal_bit_fpr']),
-            'role':'restored payload only; main table uses native fused detector'})
+            'role':'auxiliary native payload decoding; default GaussMarker main table also uses these payload bits'})
     return coords
 def calibration(backend,method):
     from metrics import scalar_calibration
@@ -98,6 +98,7 @@ def teacher(method):
         coordinates=decode_folder(backend,p/'images/test',attack,p/'payload'/f'{attack}.json')
         freeze(p/'coordinates'/f'{attack}.json',coordinates)
         result=summarize(coordinates,backend.key,c['aggregate_sizes'],c['partitions'],c['nominal_bit_fpr'],thresholds)
+        result['nominal_fpr']=c['nominal_bit_fpr'] if backend.key is not None else c['scalar_clean_fpr']
         result.update(method=method,model='teacher',attack=attack,decoder_identity=sha(p/'native_identity.json'))
         freeze(f,result)
     freeze(p/'complete.json',{'teacher':method,'identity':sha(p/'native_identity.json'),'training_images':sha(p/'images/train/image_hashes.json'),'prompts':sha(ROOT/'prompts.json')})
@@ -120,6 +121,7 @@ def student_job(method,arch,attack):
     status(p,'evaluate');backend=init(method);coordinates=decode_folder(backend,p/'images',payload_output=p/'payload.json');freeze(p/'coordinates.json',coordinates)
     c=config();thresholds=calibration(backend,method)
     result=summarize(coordinates,backend.key,c['aggregate_sizes'],c['partitions'],c['nominal_bit_fpr'],thresholds)
+    result['nominal_fpr']=c['nominal_bit_fpr'] if backend.key is not None else c['scalar_clean_fpr']
     result.update(method=method,model=arch,trained_on_manipulation=attack,post_generation_manipulation=False,decoder_identity=sha(ROOT/'teachers'/method/'native_identity.json'))
     freeze(p/'results.json',result);status(p,'completed')
 def claim(worker):
@@ -138,7 +140,10 @@ def worker():
         row=claim(identity)
         if row is None:
             db=database();remaining=db.execute("select count(*) from tasks where state in ('pending','running')").fetchone()[0];db.close()
-            if not remaining:return
+            # Pending students may be blocked forever by failed teachers.
+            # Exit when no active task can produce their missing dependency.
+            db=database();active=db.execute("select count(*) from tasks where state='running'").fetchone()[0];db.close()
+            if not remaining or not active:return
             time.sleep(20);continue
         id,kind,method,arch,attack=row;log=ROOT/'logs'/(id.replace('/','__')+'.log');log.parent.mkdir(exist_ok=True)
         cmd=[sys.executable,str(REPO/'campaign.py'),'run-task','--method',method,'--kind',kind]
@@ -147,7 +152,16 @@ def worker():
         db=database();db.execute('update tasks set state=?,updated=?,error=? where id=?',('completed' if result.returncode==0 else 'failed',time.time(),'' if result.returncode==0 else str(log),id));db.commit();db.close()
         from report import main
         main()
-        if result.returncode==0:print('DONE',METHODS[method], 'Teacher' if kind=='teacher' else f'{STUDENTS[arch]} rank4 [{attack}]',flush=True)
+        if result.returncode==0:
+            if kind=='teacher':
+                print('DONE',METHODS[method],'Teacher | evaluated',len(config()['attacks']),'manipulations | results:',ROOT/'teachers'/method/'results',flush=True)
+            else:
+                r=read(ROOT/'students'/method/arch/attack/'results.json');g={x['images_per_group']:x for x in r['rows']}
+                percent=lambda value:'N/A' if value is None else f'{100*value:.2f}%'
+                values=' | '.join([f'BA/image={percent(g.get(1,{}).get("bit_accuracy"))}',
+                    *[f'NK/{n}={percent(g.get(n,{}).get("acceptance"))}' for n in [1,8,32,256]],
+                    f'BA/256={percent(g.get(256,{}).get("bit_accuracy"))}'])
+                print('DONE',METHODS[method],f'{STUDENTS[arch]} rank4 [{attack}] |',values,flush=True)
         else:print('FAILED',METHODS[method],kind,arch,attack,'details:',log,flush=True)
 def run_task(args):
     from diffusers.utils import logging as dl
@@ -158,9 +172,7 @@ def run_task(args):
 def launch(args):
     assert (ROOT/'protocol.json').exists(),'initialize first'
     for previous in read(ROOT/'launch.json') if (ROOT/'launch.json').exists() else []:
-        try:os.kill(previous['pid'],0)
-        except ProcessLookupError:continue
-        raise RuntimeError('Workers already running; use status, do not launch duplicates')
+        if worker_alive(previous['pid']):raise RuntimeError('Workers already running; use status, do not launch duplicates')
     processes=[]
     for gpu in args.gpus.split(','):
         for slot in range(args.workers_per_gpu):
@@ -169,6 +181,15 @@ def launch(args):
             with path.open('a') as log:p=subprocess.Popen([sys.executable,str(REPO/'campaign.py'),'worker'],env=env,cwd=REPO,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             processes.append({'gpu':gpu,'slot':slot,'pid':p.pid,'log':str(path)})
     write(ROOT/'launch.json',processes);print('QUEUED',len(config()['methods'])*len(config()['students'])*len(config()['attacks']),'students;',len(processes),'workers')
+
+def worker_alive(pid):
+    """Do not confuse zombies or reused PIDs with our Python worker."""
+    proc=Path('/proc')/str(pid)
+    try:
+        if (proc/'stat').read_text().split(') ',1)[1].split()[0]=='Z':return False
+        args=(proc/'cmdline').read_bytes().split(b'\0')
+        return str(REPO/'campaign.py').encode() in args and b'worker' in args
+    except (FileNotFoundError,ProcessLookupError):return False
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('operation',choices=['initialize','launch','worker','run-task','status','retry'])
     p.add_argument('--config',type=Path,default=REPO/'config/default.json');p.add_argument('--prompts',type=Path);p.add_argument('--overrides',type=Path)

@@ -64,8 +64,10 @@ downloads clean student base checkpoints and official teacher artifacts, with
 URL/revision/checksum records; never uses random teacher weights as a fallback.
 Stable Signature uses the published SD2 decoder and whitened48-bit extractor.
 TrustMark uses official Q encoder/decoder with default BCH5 coding.
-GaussMarker uses the pretrained256-bit key/GNR bundle and the official repo's
-SD2.1 fuser; source checksums are recorded before deserialization.
+GaussMarker uses the pretrained256-bit key/GNR bundle. The default table
+now decodes its actual restored256 payload bits; this is not the original fused
+score metric. Set `gaussmarker_metric` to `fused_score` only in a separate run
+if the published fuser comparison is needed. Source checksums are recorded.
 GROW has no learned watermark checkpoint: use its pinned native progressive
 guidance implementation with unchanged defaults. SERUM uses the exact author
 epoch50 checkpoint and author SD2.1 cache, verified by SHA256, alpha0.5.
@@ -78,17 +80,60 @@ budget0.350018%, via the binomial survival function. This is theoretical under
 independent fair-bit matches, not an empirically verified FPR; BCH coded bits
 are dependent. GROW retains native per-image majority-bit decoding and thus
 aggregates hard-bit votes, rather than inventing a new coefficient decoder.
-SERUM and fused GaussMarker are scalar detectors: threshold each group size
-using separate unwatermarked calibration images at nominal empirical1% FPR.
-Their table cells mean detection, **not exact full-key recovery**. Never
-compare these thresholds as if they were identical FPR guarantees. Full JSON
+SERUM is a scalar detector: it has no native bit key, so its BA is **N/A**,
+never invented or zero-filled. Calibrate a threshold for every group size
+using5000 separate unwatermarked images at nominal0.350018% FPR, matching
+the bit methods' nominal budget (not guaranteeing identical actual FPR).
+Its NK column means detection acceptance, not literal key recovery. Optional
+GaussMarker `fused_score` mode uses the same scalar protocol. Full JSON
 retains exact-key recovery for bit decoders. Partitions reuse images and are
 not independent samples. Pending results remain `pending`, never zero.
 
 ## Run
 
-Use Linux/NVIDIA CUDA and Python3.12. Install torch2.7.1/torchvision0.22.1 for
-your CUDA platform, then `pip install -r requirements.txt`.
+Use Linux, an NVIDIA driver, git and Python3.12. A single command creates a
+private `.venv`, bootstraps pip even when `ensurepip` is absent, installs
+PyTorch2.7.1/torchvision0.22.1 CUDA12.6 and dependencies, prepares disjoint COCO
+caption splits if no existing prompt file is available, downloads pinned
+sources/models, trains, evaluates, and waits for all jobs to finish:
+
+```bash
+./run.sh --gpus 0
+```
+
+Default:105 student trainings, each20000 steps. This is the native baseline
+benchmark described above, **not** the screenshot's Structure32 rank32 trial.
+No FID/KID is calculated. No private Structure teacher checkpoint is needed.
+Different native payload lengths are retained; do not force256/48/100 bits
+into a24-of32 rule. Native32-bit payloads use the24/32 threshold.
+
+A model completion produces one console line, for example:
+`DONE Stable Signature SD1.4 rank4 [flip] | BA/image=... | NK/1=... | NK/8=... | NK/32=... | NK/256=... | BA/256=...`.
+Teacher completion prints once after its manipulation panel. Per-step losses,
+download progress and upstream diagnostics stay in task logs. The foreground
+monitor forwards completion/failure lines only, without replaying old messages.
+
+```bash
+# Put large models/data on the data volume and use GPU1.
+BASELINE_WORK=/data/baseline/work BASELINE_CACHE=/data/baseline/cache ./run.sh --gpus 1
+# Keep your exact original prompt set rather than creating a new COCO split.
+./run.sh --prompts /path/to/coco_prompts.json --gpus 0,1 --workers-per-gpu 1
+# Only install/download; do not launch training yet.
+./run.sh --prepare-only
+# After fixing a failure, resume verified checkpoints and retry failed tasks.
+./run.sh --skip-install --retry-failed
+```
+
+Use the same work/cache paths and arguments when resuming. A work directory
+with a different frozen protocol is rejected; select a new `BASELINE_WORK`
+for an older fused-score/1%FPR experiment. A gated model may require `HF_TOKEN`
+and accepting its upstream license. If a download fails, the script stops
+with its log, never silently substitutes another model. The script installs
+Python packages; it does not install the host NVIDIA driver.
+Set `TORCH_INDEX_URL` for another official PyTorch wheel variant compatible
+with your GPU/driver, and `BASELINE_VENV` to relocate the environment.
+
+The following manual commands remain available:
 
 ```bash
 export BASELINE_WORK=/var/lib/baseline_manipulation/work
@@ -102,8 +147,10 @@ python report.py
 ```
 
 Prompt JSON has `train`, `test`, `calibration` lists with `text` and `image_id`.
-Use5000/1000/5000 disjoint image IDs. Defaults reference the old COCO splits
-on the research server; supply `--prompts` on any other machine. Model overrides
+Use5000/1000/5000 disjoint image IDs. The config can reference the old server split. If it is absent, `run.sh`
+downloads official COCO2014 captions and creates a deterministic new split,
+recording its source archive checksum. This generated split is not claimed
+to reproduce the screenshot or exclude an unknown private teacher dataset. Model overrides
 can point at already-downloaded exact base snapshots using `--overrides` with
 a JSON object mapping `teacher`, `sd14`, `sana600m`, `pixart512` to local paths.
 Weights and data are ignored by git. Do not commit tokens, PEM files or keys.
@@ -116,11 +163,17 @@ fresh; there is no pre-existing adapter for a new transfer experiment.
 
 Only `DONE teacher/student` (and failures) go to worker console logs. Detailed
 upstream progress stays in task logs. Follow `work/logs/worker_gpu*.log`.
-`run.sh --prompts /path/to/coco_prompts.json` downloads bases first and lets
-each teacher task fetch its own artifacts, so one large author download does
-not delay every other method. Set GPU workers after checking free VRAM.
-Results: `work/reports/acceptance_agg256.csv` and `table.json`; per-model JSON
-is authoritative. Teacher download failures are explicit and do not produce
+`run.sh` downloads all selected methods' artifacts before training. Use a
+custom config with smaller `methods`/`students`/`attacks` lists to select a
+subset, e.g. `./run.sh --config config/subset.json`. The default is one worker
+on GPU0. Set additional workers only when the GPU has enough free VRAM.
+Results: `work/reports/metrics.csv` and `metrics.json` contain BA/image,
+NK/image, NK agg8/32/256 and BA agg256, plus method/model/manipulation,
+payload length, threshold, nominal FPR and metric kind. Fractions in these
+files range from0 to1; multiply by100 for percentages. SERUM BA cells are
+empty/null because it has no bits. The compact
+`acceptance_agg256.csv`/`table.json` are also retained. No FID/KID.
+Per-model JSON remains authoritative. Teacher download failures are explicit and do not produce
 fabricated baseline numbers. Once fixes are made, retry failed queue tasks
 explicitly; never silently replace a teacher or alter an in-progress identity.
 Use `python campaign.py retry --method serum` after correcting a download

@@ -143,7 +143,12 @@ class GaussMarker(Native):
         if 'state_dict' in state:state=state['state_dict']
         first=state['inc.double_conv.0.weight'];self.gnr=UNet(first.shape[1],4,nf=first.shape[0]).cuda().eval().requires_grad_(False);self.gnr.load_state_dict(state,strict=True)
         self.conditional=first.shape[1]==8;self.fuser=joblib.load(files['classifier']);self.payload_key=self.wm.watermark.flatten().int().tolist()
-        freeze(p/'native_identity.json',{'method':'GaussMarker 256bits, native dual-domain + GNR + published SD2.1 classifier','artifacts':{k:sha(v) for k,v in files.items()},'key':self.payload_key,'GNR_conditional':self.conditional,'metric':'fused probability; restored-bit BA also saved separately','inversion':'upstream DDIM algebra on native DPM timestep grid, empty prompt, CFG1, 50steps, final alpha1'})
+        # Comparable bit-level summary uses actual restored native payload bits.
+        # Keep the published fuser available as an explicit optional protocol.
+        self.metric=c.get('gaussmarker_metric','payload_bits')
+        if self.metric not in ['payload_bits','fused_score']:raise ValueError(self.metric)
+        if self.metric=='payload_bits':self.key=self.payload_key
+        freeze(p/'native_identity.json',{'method':'GaussMarker 256bits, native dual-domain + GNR + published SD2.1 classifier','artifacts':{k:sha(v) for k,v in files.items()},'key':self.payload_key,'GNR_conditional':self.conditional,'metric':self.metric,'inversion':'upstream DDIM algebra on native DPM timestep grid, empty prompt, CFG1, 50steps, final alpha1'})
     def generate(self,prompts,seeds):
         from tr_utils import inject_watermark
         import random
@@ -172,6 +177,7 @@ class GaussMarker(Native):
             restored=(self.gnr(inp.float()).sigmoid()>.5).int().cpu()
             bits=[self.wm.pred_w_from_m(t[None]).flatten().numpy() for t in restored]
             self.last_bits=np.asarray(bits)
+            if self.metric=='payload_bits':return self.last_bits.astype(np.float32)*2-1
             acc=(self.last_bits==np.asarray(self.payload_key)).mean(1)
             fft=torch.fft.fftshift(torch.fft.fft2(z),dim=(-1,-2));freq=[]
             for item in fft:freq.append(-float((item[None][self.mask]-self.patch[self.mask]).abs().mean())*.01)
