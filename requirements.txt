@@ -1,0 +1,25 @@
+diffusers==0.35.1
+transformers==4.51.3
+peft==0.17.1
+accelerate==1.10.1
+safetensors==0.6.2
+numpy==1.26.4
+scipy
+Pillow
+omegaconf
+einops
+lightning
+timm
+bchlib
+pycryptodome
+scikit-learn==1.5.2
+joblib==1.4.2
+datasets
+gdown
+beautifulsoup4
+soupsieve
+torch-dct
+torch-fidelity
+lpips
+pyyaml
+# Install torch2.7.1 and torchvision0.22.1 for your CUDA platform first.
