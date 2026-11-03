@@ -15,7 +15,14 @@ def generate(arch,mode,model_path,job,rows,output):
     if mode=='full':
         folder=branch/'unet' if arch=='sd14' else Path(job)/'transformer'
         setattr(pipe,attr,type(model).from_pretrained(folder,torch_dtype=dtype,local_files_only=True).cuda())
-    else:load_adapter(model,branch if arch=='sd14' else Path(job)/'adapter')
+    elif arch=='sd14':
+        # Reused Diffusers trainer can emit legacy pytorch_lora_weights rather
+        # than PEFT adapter_model. Use the historical loader that supports both.
+        from benchmark.shared.student_training.integration import function,REF
+        namespace={'Path':Path}
+        exec(function(REF/'harness/student.py','load_adapter'),namespace)
+        namespace['load_adapter'](model,branch,pipe)
+    else:load_adapter(model,Path(job)/'adapter')
     if arch!='sd14':pipe.vae.to(torch.float32)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     for start in range(0,len(rows),4):

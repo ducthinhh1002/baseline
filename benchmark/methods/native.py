@@ -66,7 +66,22 @@ def create(method,workspace):
 def gaussmarker(c):
     import torch,joblib
     sys.path.insert(0,str(official('GaussMarker')))
+    # Author constructor passed requires_safety_checker positionally. Modern
+    # Diffusers inserted image_encoder at that position. Adapt binding only;
+    # author generation, inverse loop and watermark verifier remain untouched.
+    from diffusers import StableDiffusionPipeline
+    from modified_stable_diffusion import ModifiedStableDiffusionPipeline
+    def compatible_init(self,vae,text_encoder,tokenizer,unet,scheduler,safety_checker,feature_extractor,requires_safety_checker=False):
+        StableDiffusionPipeline.__init__(self,vae=vae,text_encoder=text_encoder,tokenizer=tokenizer,
+            unet=unet,scheduler=scheduler,safety_checker=safety_checker,feature_extractor=feature_extractor,
+            requires_safety_checker=requires_safety_checker)
+    ModifiedStableDiffusionPipeline.__init__=compatible_init
     from inverse_stable_diffusion import InversableStableDiffusionPipeline
+    author_init=InversableStableDiffusionPipeline.__init__
+    def inverse_init(self,vae,text_encoder,tokenizer,unet,scheduler,safety_checker,feature_extractor,
+                     requires_safety_checker=False,image_encoder=None):
+        author_init(self,vae,text_encoder,tokenizer,unet,scheduler,safety_checker,feature_extractor,requires_safety_checker)
+    InversableStableDiffusionPipeline.__init__=inverse_init
     from diffusers import DPMSolverMultistepScheduler
     from watermark import Gaussian_Shading_chacha
     from tr_utils import get_watermarking_mask,inject_watermark,eval_watermark

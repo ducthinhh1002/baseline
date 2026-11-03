@@ -46,6 +46,8 @@ def main():
         result=evaluate(a.method,data['coordinates'],data.get('key'),threshold,data.get('payload_bits'))
         dump(a.output,{'method':a.method,'model':data['model'],'attack':data['attack'],**result});print('DONE evaluation',a.method,data['model']);return
     if not a.execute:raise ValueError('GPU stage is preparation-only unless --execute is explicitly supplied')
+    from benchmark.shared.process_title import configure
+    configure()
     if a.stage=='student-train':
         if not all([a.arch,a.mode,a.model,a.input]):raise ValueError('Need --arch --mode --model --input baseline data source')
         if a.arch!='sd14':
